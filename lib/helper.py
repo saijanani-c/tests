@@ -18,6 +18,7 @@ import subprocess
 import os
 import re
 import sys
+import shlex
 import shutil
 import stat
 import platform
@@ -264,3 +265,117 @@ class PipMagager:
             runcmd(cmd, ignore_status=True,
                    err_str="Error in removing package: %s" % package,
                    debug_str="Uninstalling %s" % package)
+
+
+
+class RemoteRunner:
+    """
+    SSH-based remote command runner using ``sshpass`` + the system ``ssh``
+    binary.  No Python C-extension dependencies (no paramiko/bcrypt/pynacl)
+    are required — only the ``sshpass`` package must be installed on the
+    *local* machine (``yum install sshpass`` / ``apt-get install sshpass``).
+
+    Provides the same ``runcmd()`` interface as the local helper so it can be
+    used as a drop-in replacement for remote machines.
+
+    Usage::
+
+        runner = RemoteRunner(host='192.168.1.10', username='root', password='secret')
+        status, output = runner.runcmd('ip a s dev eth0')
+        runner.close()   # no-op for this implementation, kept for API compat
+
+    Context-manager usage::
+
+        with RemoteRunner(host='192.168.1.10', username='root', password='secret') as r:
+            status, output = r.runcmd('lsdevinfo -c')
+    """
+
+    # Common SSH options that suppress host-key prompts and banners.
+    _SSH_OPTS = (
+        "-o StrictHostKeyChecking=no "
+        "-o UserKnownHostsFile=/dev/null "
+        "-o BatchMode=no "
+        "-o LogLevel=ERROR"
+    )
+
+    def __init__(self, host, username, password, port=22, timeout=30):
+        """
+        Store connection parameters and verify that ``sshpass`` is available.
+
+        :param host: Hostname or IP address of the remote machine.
+        :param username: SSH login username.
+        :param password: SSH login password.
+        :param port: SSH port (default 22).
+        :param timeout: Per-command connect timeout in seconds (default 30).
+        """
+        # Verify sshpass is on PATH
+        chk_status, _ = subprocess.getstatusoutput("which sshpass")
+        if chk_status != 0:
+            logger.error(
+                "sshpass is not installed. Install it with: "
+                "yum install sshpass  OR  apt-get install sshpass"
+            )
+            sys.exit(1)
+
+        self.host = host
+        self.username = username
+        self._password = password
+        self.port = port
+        self.timeout = timeout
+        logger.info("RemoteRunner ready for %s@%s:%s (sshpass mode)", username, host, port)
+
+    def runcmd(self, cmd, ignore_status=False, err_str="", info_str="", debug_str=""):
+        """
+        Run *cmd* on the remote host via ``sshpass``/``ssh``.
+
+        :param cmd: Shell command string to execute remotely.
+        :param ignore_status: If False (default), calls sys.exit(1) on non-zero exit.
+        :param err_str: Message to log at ERROR level on failure.
+        :param info_str: Message to log at INFO level before running.
+        :param debug_str: Message to log at DEBUG level before running.
+        :return: (status, output) tuple — identical contract to local runcmd().
+        """
+        if info_str:
+            logger.info(info_str)
+        if debug_str:
+            logger.debug(debug_str)
+
+        # Build: sshpass -p <pwd> ssh <opts> -p <port> -o ConnectTimeout=<t> user@host '<cmd>'
+        remote_cmd = (
+            "sshpass -p {pwd} ssh {opts} -p {port} "
+            "-o ConnectTimeout={timeout} "
+            "{user}@{host} {quoted_cmd}"
+        ).format(
+            pwd=shlex.quote(self._password),
+            opts=self._SSH_OPTS,
+            port=self.port,
+            timeout=self.timeout,
+            user=self.username,
+            host=self.host,
+            quoted_cmd=shlex.quote(cmd),
+        )
+
+        logger.debug("Remote(%s) running: %s", self.host, cmd)
+        try:
+            status, output = subprocess.getstatusoutput(remote_cmd)
+            if status != 0 and not ignore_status:
+                if err_str:
+                    logger.error("%s %s", err_str, output)
+                sys.exit(1)
+            logger.debug(output)
+            return (status, output)
+        except Exception as error:
+            if err_str:
+                logger.error("%s %s", err_str, error)
+            sys.exit(1)
+
+    def close(self):
+        """No persistent connection to close; kept for API compatibility."""
+        logger.debug("RemoteRunner.close() called for %s (no-op)", self.host)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False

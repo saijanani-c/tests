@@ -392,39 +392,42 @@ def run_test(testsuite, avocado_bin, runner, linux_src_path, resume_job_dir=None
     :param linux_src_path: Path to kernel source for gcov coverage (or None)
     :param resume_job_dir: Prior avocado job dir for resume mode (or None)
     """
-    nrun = True
-    if runner:
-        runner = '--test-runner runner'
-        nrun = False
+    if resume_job_dir:
+        pass  # placeholder — filled in next commit
     else:
-        runner = '--max-parallel-tasks=1'
-
-    logger.info('')
-    if 'guest' in testsuite.type:
-        guest_args = TestSuite.guest_add_args
-        logger.info("Running Guest Tests Suite %s", testsuite.shortname)
-        if "sanity" in testsuite.shortname:
-            guest_args = " --vt-only-filter %s " % args.guest_os
-        cmd = "%s run --vt-type %s --vt-config %s \
-                --force-job-id %s \
-                --job-results-dir %s %s" % (avocado_bin, testsuite.vt_type,
-                                            testsuite.config(),
-                                            testsuite.jobid,
-                                            testsuite.resultdir, guest_args)
-    if 'host' in testsuite.type:
-        logger.info("Running Host Tests Suite %s", testsuite.shortname)
-        if nrun:
-            cmd = "%s run %s %s" % (avocado_bin, runner, os.path.join(TEST_DIR, testsuite.test))
+        nrun = True
+        if runner:
+            runner = '--test-runner runner'
+            nrun = False
         else:
-            cmd = "%s run %s %s" % (avocado_bin, runner, testsuite.test)
-        if testsuite.mux:
-            cmd += " -m %s" % os.path.join(TEST_DIR, testsuite.mux)
-        cmd += " --force-job-id %s \
-                 --job-results-dir %s %s" % (testsuite.jobid,
-                                             testsuite.resultdir,
-                                             TestSuite.host_add_args)
-        if testsuite.args:
-            cmd += testsuite.args
+            runner = '--max-parallel-tasks=1'
+
+        logger.info('')
+        if 'guest' in testsuite.type:
+            guest_args = TestSuite.guest_add_args
+            logger.info("Running Guest Tests Suite %s", testsuite.shortname)
+            if "sanity" in testsuite.shortname:
+                guest_args = " --vt-only-filter %s " % args.guest_os
+            cmd = "%s run --vt-type %s --vt-config %s \
+                    --force-job-id %s \
+                    --job-results-dir %s %s" % (avocado_bin, testsuite.vt_type,
+                                                testsuite.config(),
+                                                testsuite.jobid,
+                                                testsuite.resultdir, guest_args)
+        if 'host' in testsuite.type:
+            logger.info("Running Host Tests Suite %s", testsuite.shortname)
+            if nrun:
+                cmd = "%s run %s %s" % (avocado_bin, runner, os.path.join(TEST_DIR, testsuite.test))
+            else:
+                cmd = "%s run %s %s" % (avocado_bin, runner, testsuite.test)
+            if testsuite.mux:
+                cmd += " -m %s" % os.path.join(TEST_DIR, testsuite.mux)
+            cmd += " --force-job-id %s \
+                     --job-results-dir %s %s" % (testsuite.jobid,
+                                                 testsuite.resultdir,
+                                                 TestSuite.host_add_args)
+            if testsuite.args:
+                cmd += testsuite.args
 
     input_file = args.inputfile
     try:

@@ -978,10 +978,28 @@ if __name__ == '__main__':
         # Run Tests
         count_testsuites_status[Testsuite_status.Total.value] = len(Testsuites_list)
         for test_suite in Testsuites_list:
-            if not Testsuites[test_suite].run == Testsuite_status.Cant_Run.value:
-                run_test(Testsuites[test_suite], avocado_bin, args.runner, args.linux_src_path)
-                if args.interval:
-                    time.sleep(int(args.interval))
+            if Testsuites[test_suite].run == Testsuite_status.Cant_Run.value:
+                continue
+            if args.resume:
+                if _suite_completed(test_suite):
+                    logger.info("RESUME: skipping '%s' (completed in prior run)",
+                                test_suite)
+                    Testsuites[test_suite].runstatus(
+                        Testsuite_status.Run.value,
+                        "Skipped (completed in prior run)")
+                    count_testsuites_status[Testsuite_status.Run.value] += 1
+                else:
+                    replay_dir = _suite_replay_dir(test_suite)
+                    if replay_dir:
+                        logger.info("RESUME: replaying '%s' from %s",
+                                    test_suite, replay_dir)
+                    run_test(Testsuites[test_suite], avocado_bin, args.runner,
+                             args.linux_src_path, replay_dir)
+            else:
+                run_test(Testsuites[test_suite], avocado_bin, args.runner,
+                         args.linux_src_path)
+            if args.interval:
+                time.sleep(int(args.interval))
 
         # Finding the space needed for formatting result summary
         test_name_list = []

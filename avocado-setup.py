@@ -383,13 +383,14 @@ def bootstrap(enable_kvm=False, guest_os=None):
             helper.copy_dir_file(postscript, postscript_dir)
 
 
-def run_test(testsuite, avocado_bin, runner, linux_src_path):
+def run_test(testsuite, avocado_bin, runner, linux_src_path, resume_job_dir=None):
     """
     To run given testsuite
     :param testsuite: Testsuite object which has details about the tests
     :param avocado_bin: Executable path of avocado
     :param runner: Whether to use --test-runner runner (True) or --max-parallel-tasks=1 (False)
     :param linux_src_path: Path to kernel source for gcov coverage (or None)
+    :param resume_job_dir: Prior avocado job dir for resume mode (or None)
     """
     nrun = True
     if runner:

@@ -732,6 +732,13 @@ if __name__ == '__main__':
     parser.add_argument('--config-norun', dest='NORUNTEST_PATH',
                         action='store', default=NORUNTEST_PATH,
                         help='Specify no run tests config path')
+    parser.add_argument('--resume', dest='resume',
+                        action='store_true', default=False,
+                        help='Resume an interrupted run using the same '
+                             '--output-dir results directory. Skips suites '
+                             'that completed cleanly, replays the interrupted '
+                             'suite via avocado replay, and runs remaining '
+                             'suites fresh.')
 
     args = parser.parse_args()
 

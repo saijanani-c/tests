@@ -947,6 +947,34 @@ if __name__ == '__main__':
             logger.info("RESUME: suite to job dir map from %s: %s",
                         outputdir, suite_job_map)
 
+        def _suite_completed(suite_name):
+            """Return True if suite has a prior job with a clean results.json.
+            A suite is complete when total > 0 and interrupt == 0.
+            """
+            if suite_name not in suite_job_map:
+                return False
+            rj = os.path.join(suite_job_map[suite_name], "results.json")
+            if not os.path.isfile(rj):
+                return False
+            try:
+                with open(rj, encoding="utf-8") as fp:
+                    d = json.load(fp)
+                return (int(d.get("total", 0)) > 0 and
+                        int(d.get("interrupt", 0)) == 0)
+            except (OSError, json.JSONDecodeError):
+                return False
+
+        def _suite_replay_dir(suite_name):
+            """Return the prior job dir to replay for this suite, or None.
+            Returns None when suite has no prior job dir (never ran)
+            so it gets a normal fresh run instead of a replay.
+            """
+            if suite_name in suite_job_map and not _suite_completed(suite_name):
+                return suite_job_map[suite_name]
+            if "__interrupted__" in suite_job_map and suite_name in suite_job_map:
+                return suite_job_map.pop("__interrupted__")
+            return None
+
         # Run Tests
         count_testsuites_status[Testsuite_status.Total.value] = len(Testsuites_list)
         for test_suite in Testsuites_list:

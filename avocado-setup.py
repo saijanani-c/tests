@@ -898,6 +898,55 @@ if __name__ == '__main__':
                                                      "Config file not present")
                     count_testsuites_status[Testsuite_status.Cant_Run.value] += 1
                     continue
+        # Build suite_job_map: scan outputdir job-* dirs and match each to a
+        # suite name so the run loop knows which suites completed, which was
+        # interrupted, and which never ran.
+        suite_job_map = {}
+        if args.resume:
+            if not os.path.isdir(outputdir):
+                logger.error("RESUME: results dir does not exist: %s", outputdir)
+                sys.exit(1)
+            # host suites: match test file basename in avocado test IDs
+            # guest suites: match suite shortname in avocado VT test IDs
+            basename_to_suite = {}
+            shortname_to_suite = {}
+            for ts_name in Testsuites_list:
+                ts = Testsuites[ts_name]
+                if ts.test:
+                    basename_to_suite[os.path.basename(ts.test.rstrip('$'))] = ts_name
+                elif ts.type == 'guest':
+                    shortname_to_suite[ts.shortname] = ts_name
+            for entry in sorted(os.listdir(outputdir)):
+                job_path = os.path.join(outputdir, entry)
+                if not entry.startswith("job-") or not os.path.isdir(job_path):
+                    continue
+                rj = os.path.join(job_path, "results.json")
+                matched = None
+                if os.path.isfile(rj):
+                    try:
+                        with open(rj, encoding="utf-8") as fp:
+                            rdata = json.load(fp)
+                        for t in rdata.get("tests", []):
+                            tid = t.get("id", "")
+                            tbase = tid.split(":")[0].split("/")[-1]
+                            if tbase in basename_to_suite:
+                                matched = basename_to_suite[tbase]
+                                break
+                            for sname, ts_name in shortname_to_suite.items():
+                                if sname in tid:
+                                    matched = ts_name
+                                    break
+                            if matched:
+                                break
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                if matched:
+                    suite_job_map[matched] = job_path
+                else:
+                    suite_job_map.setdefault("__interrupted__", job_path)
+            logger.info("RESUME: suite to job dir map from %s: %s",
+                        outputdir, suite_job_map)
+
         # Run Tests
         count_testsuites_status[Testsuite_status.Total.value] = len(Testsuites_list)
         for test_suite in Testsuites_list:

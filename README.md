@@ -67,7 +67,7 @@ $ ./avocado-setup.py -h
                             [--additional-args ADD_ARGS] [--guest-os GUEST_OS] [--vt {qemu,libvirt}]
                             [--install] [--no-download] [--no-deps-check] [--install-deps] [--clean]
                             [--enable-kvm] [--nrunner] [--run-tests RUN_TESTS] [--config-env CONFIG_PATH]
-                            [--config-norun NORUNTEST_PATH]
+                            [--config-norun NORUNTEST_PATH] [--resume]
 
     options:
     -h, --help              show this help message and exit
@@ -103,6 +103,9 @@ $ ./avocado-setup.py -h
                             Specify env config path
     --config-norun NORUNTEST_PATH
                             Specify no run tests config path
+    --resume                Resume an interrupted run using the same --output-dir results
+                            directory. Skips suites that completed cleanly, replays the
+                            interrupted suite via avocado replay, and runs remaining suites fresh.
 
 ```
 
@@ -261,6 +264,36 @@ $ ./avocado-setup.py -h
 
 19. `--config-norun`:
     > Path to a custom NORUNTEST File path
+
+20. `--resume`:
+    > Use this option to resume a test run that was interrupted due to a system crash or reboot.
+    > The wrapper scans the results directory (from `--output-dir` or the default `results/` path)
+    > and automatically determines the state of each suite:
+    >
+    > | Suite state in prior run | Action on resume |
+    > |---|---|
+    > | Completed cleanly | Skipped — not re-run |
+    > | Was running at time of crash/reboot | Replayed via `avocado replay <job_id>` — only not-passed tests re-run |
+    > | Never started (system crashed before it was reached) | Normal fresh run |
+    >
+    > **Usage — first run:**
+    > ```
+    > ./avocado-setup.py --run-suite host_a,host_b,host_c
+    > ```
+    >
+    > **After system reboot/crash — same command with `--resume`:**
+    > ```
+    > ./avocado-setup.py --run-suite host_a,host_b,host_c --resume
+    > ```
+    >
+    > If a custom `--output-dir` was used in the original run, pass it again with `--resume`:
+    > ```
+    > ./avocado-setup.py --run-suite host_a,host_b,host_c --output-dir /path/to/output --resume
+    > ```
+    >
+    > NOTE: The `--run-suite` list must be identical to the original run so the wrapper can
+    > correctly identify which suites ran, which was interrupted, and which never started.
+    > Works for both host and guest test suites.
 
 ### Customizing Test Suites:
 

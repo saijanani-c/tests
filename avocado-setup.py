@@ -383,47 +383,57 @@ def bootstrap(enable_kvm=False, guest_os=None):
             helper.copy_dir_file(postscript, postscript_dir)
 
 
-def run_test(testsuite, avocado_bin, runner, linux_src_path):
+def run_test(testsuite, avocado_bin, runner, linux_src_path, resume_job_dir=None):
     """
     To run given testsuite
     :param testsuite: Testsuite object which has details about the tests
     :param avocado_bin: Executable path of avocado
     :param runner: Whether to use --test-runner runner (True) or --max-parallel-tasks=1 (False)
     :param linux_src_path: Path to kernel source for gcov coverage (or None)
+    :param resume_job_dir: Prior avocado job dir for resume mode (or None)
     """
-    nrun = True
-    if runner:
-        runner = '--test-runner runner'
-        nrun = False
+    if resume_job_dir:
+        # avocado replay <job_id> re-runs only not-passed tests from that job.
+        # The job_id is the trailing hex in the job dir name e.g.
+        # job-2026-07-28T04.29-07add70  →  job_id = 07add70
+        job_id = os.path.basename(resume_job_dir).rsplit('-', 1)[-1]
+        logger.info("Resuming suite %s via avocado replay %s",
+                    testsuite.name, job_id)
+        cmd = "%s replay %s" % (avocado_bin, job_id)
     else:
-        runner = '--max-parallel-tasks=1'
-
-    logger.info('')
-    if 'guest' in testsuite.type:
-        guest_args = TestSuite.guest_add_args
-        logger.info("Running Guest Tests Suite %s", testsuite.shortname)
-        if "sanity" in testsuite.shortname:
-            guest_args = " --vt-only-filter %s " % args.guest_os
-        cmd = "%s run --vt-type %s --vt-config %s \
-                --force-job-id %s \
-                --job-results-dir %s %s" % (avocado_bin, testsuite.vt_type,
-                                            testsuite.config(),
-                                            testsuite.jobid,
-                                            testsuite.resultdir, guest_args)
-    if 'host' in testsuite.type:
-        logger.info("Running Host Tests Suite %s", testsuite.shortname)
-        if nrun:
-            cmd = "%s run %s %s" % (avocado_bin, runner, os.path.join(TEST_DIR, testsuite.test))
+        nrun = True
+        if runner:
+            runner = '--test-runner runner'
+            nrun = False
         else:
-            cmd = "%s run %s %s" % (avocado_bin, runner, testsuite.test)
-        if testsuite.mux:
-            cmd += " -m %s" % os.path.join(TEST_DIR, testsuite.mux)
-        cmd += " --force-job-id %s \
-                 --job-results-dir %s %s" % (testsuite.jobid,
-                                             testsuite.resultdir,
-                                             TestSuite.host_add_args)
-        if testsuite.args:
-            cmd += testsuite.args
+            runner = '--max-parallel-tasks=1'
+
+        logger.info('')
+        if 'guest' in testsuite.type:
+            guest_args = TestSuite.guest_add_args
+            logger.info("Running Guest Tests Suite %s", testsuite.shortname)
+            if "sanity" in testsuite.shortname:
+                guest_args = " --vt-only-filter %s " % args.guest_os
+            cmd = "%s run --vt-type %s --vt-config %s \
+                    --force-job-id %s \
+                    --job-results-dir %s %s" % (avocado_bin, testsuite.vt_type,
+                                                testsuite.config(),
+                                                testsuite.jobid,
+                                                testsuite.resultdir, guest_args)
+        if 'host' in testsuite.type:
+            logger.info("Running Host Tests Suite %s", testsuite.shortname)
+            if nrun:
+                cmd = "%s run %s %s" % (avocado_bin, runner, os.path.join(TEST_DIR, testsuite.test))
+            else:
+                cmd = "%s run %s %s" % (avocado_bin, runner, testsuite.test)
+            if testsuite.mux:
+                cmd += " -m %s" % os.path.join(TEST_DIR, testsuite.mux)
+            cmd += " --force-job-id %s \
+                     --job-results-dir %s %s" % (testsuite.jobid,
+                                                 testsuite.resultdir,
+                                                 TestSuite.host_add_args)
+            if testsuite.args:
+                cmd += testsuite.args
 
     input_file = args.inputfile
     try:
@@ -722,6 +732,13 @@ if __name__ == '__main__':
     parser.add_argument('--config-norun', dest='NORUNTEST_PATH',
                         action='store', default=NORUNTEST_PATH,
                         help='Specify no run tests config path')
+    parser.add_argument('--resume', dest='resume',
+                        action='store_true', default=False,
+                        help='Resume an interrupted run using the same '
+                             '--output-dir results directory. Skips suites '
+                             'that completed cleanly, replays the interrupted '
+                             'suite via avocado replay, and runs remaining '
+                             'suites fresh.')
 
     args = parser.parse_args()
 
@@ -881,13 +898,108 @@ if __name__ == '__main__':
                                                      "Config file not present")
                     count_testsuites_status[Testsuite_status.Cant_Run.value] += 1
                     continue
+        # Build suite_job_map: scan outputdir job-* dirs and match each to a
+        # suite name so the run loop knows which suites completed, which was
+        # interrupted, and which never ran.
+        suite_job_map = {}
+        if args.resume:
+            if not os.path.isdir(outputdir):
+                logger.error("RESUME: results dir does not exist: %s", outputdir)
+                sys.exit(1)
+            # host suites: match test file basename in avocado test IDs
+            # guest suites: match suite shortname in avocado VT test IDs
+            basename_to_suite = {}
+            shortname_to_suite = {}
+            for ts_name in Testsuites_list:
+                ts = Testsuites[ts_name]
+                if ts.test:
+                    basename_to_suite[os.path.basename(ts.test.rstrip('$'))] = ts_name
+                elif ts.type == 'guest':
+                    shortname_to_suite[ts.shortname] = ts_name
+            for entry in sorted(os.listdir(outputdir)):
+                job_path = os.path.join(outputdir, entry)
+                if not entry.startswith("job-") or not os.path.isdir(job_path):
+                    continue
+                rj = os.path.join(job_path, "results.json")
+                matched = None
+                if os.path.isfile(rj):
+                    try:
+                        with open(rj, encoding="utf-8") as fp:
+                            rdata = json.load(fp)
+                        for t in rdata.get("tests", []):
+                            tid = t.get("id", "")
+                            tbase = tid.split(":")[0].split("/")[-1]
+                            if tbase in basename_to_suite:
+                                matched = basename_to_suite[tbase]
+                                break
+                            for sname, ts_name in shortname_to_suite.items():
+                                if sname in tid:
+                                    matched = ts_name
+                                    break
+                            if matched:
+                                break
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                if matched:
+                    suite_job_map[matched] = job_path
+                else:
+                    suite_job_map.setdefault("__interrupted__", job_path)
+            logger.info("RESUME: suite to job dir map from %s: %s",
+                        outputdir, suite_job_map)
+
+        def _suite_completed(suite_name):
+            """Return True if suite has a prior job with a clean results.json.
+            A suite is complete when total > 0 and interrupt == 0.
+            """
+            if suite_name not in suite_job_map:
+                return False
+            rj = os.path.join(suite_job_map[suite_name], "results.json")
+            if not os.path.isfile(rj):
+                return False
+            try:
+                with open(rj, encoding="utf-8") as fp:
+                    d = json.load(fp)
+                return (int(d.get("total", 0)) > 0 and
+                        int(d.get("interrupt", 0)) == 0)
+            except (OSError, json.JSONDecodeError):
+                return False
+
+        def _suite_replay_dir(suite_name):
+            """Return the prior job dir to replay for this suite, or None.
+            Returns None when suite has no prior job dir (never ran)
+            so it gets a normal fresh run instead of a replay.
+            """
+            if suite_name in suite_job_map and not _suite_completed(suite_name):
+                return suite_job_map[suite_name]
+            if "__interrupted__" in suite_job_map and suite_name in suite_job_map:
+                return suite_job_map.pop("__interrupted__")
+            return None
+
         # Run Tests
         count_testsuites_status[Testsuite_status.Total.value] = len(Testsuites_list)
         for test_suite in Testsuites_list:
-            if not Testsuites[test_suite].run == Testsuite_status.Cant_Run.value:
-                run_test(Testsuites[test_suite], avocado_bin, args.runner, args.linux_src_path)
-                if args.interval:
-                    time.sleep(int(args.interval))
+            if Testsuites[test_suite].run == Testsuite_status.Cant_Run.value:
+                continue
+            if args.resume:
+                if _suite_completed(test_suite):
+                    logger.info("RESUME: skipping '%s' (completed in prior run)",
+                                test_suite)
+                    Testsuites[test_suite].runstatus(
+                        Testsuite_status.Run.value,
+                        "Skipped (completed in prior run)")
+                    count_testsuites_status[Testsuite_status.Run.value] += 1
+                else:
+                    replay_dir = _suite_replay_dir(test_suite)
+                    if replay_dir:
+                        logger.info("RESUME: replaying '%s' from %s",
+                                    test_suite, replay_dir)
+                    run_test(Testsuites[test_suite], avocado_bin, args.runner,
+                             args.linux_src_path, replay_dir)
+            else:
+                run_test(Testsuites[test_suite], avocado_bin, args.runner,
+                         args.linux_src_path)
+            if args.interval:
+                time.sleep(int(args.interval))
 
         # Finding the space needed for formatting result summary
         test_name_list = []
